@@ -111,49 +111,73 @@ def main():
         time.sleep(0.5)
     print(Fore.GREEN + f"Detected ESP32-C5 on port: {serial_port}" + Style.RESET_ALL)
 
-    # Find bin files for each firmware component
+    # === Prefer merged.bin (flash at 0x0 — safest, avoids all offset mistakes) ===
+    merged_bin = find_file(['*.merged.bin', 'merged.bin'], bins_dir)
+
+    # Individual component bins (fallback)
     bootloader = find_file(['bootloader.bin'], bins_dir)
     partitions = find_file(['partition-table.bin', 'partitions.bin'], bins_dir)
-    ota_data = find_file(['ota_data_initial.bin'], bins_dir)
+    ota_data   = find_file(['ota_data_initial.bin'], bins_dir)
 
-    # Main firmware: largest bin in the folder that's not bootloader, partition, or OTA
+    # Main firmware: largest bin that is not bootloader, partition, OTA, or merged
     all_bins = glob.glob(os.path.join(bins_dir, "*.bin"))
-    exclude = {bootloader, partitions, ota_data}
+    exclude = {bootloader, partitions, ota_data, merged_bin}
     firmware_bins = [f for f in all_bins if f not in exclude and os.path.isfile(f)]
-    if not firmware_bins:
-        print(Fore.RED + "No application firmware .bin file found in the 'bins' folder!" + Style.RESET_ALL)
-        exit(1)
-    app_bin = max(firmware_bins, key=lambda f: os.path.getsize(f))
+    app_bin = max(firmware_bins, key=lambda f: os.path.getsize(f)) if firmware_bins else None
 
-    # Print summary, ask for confirmation before flashing
-    print(Fore.CYAN + f"\nBootloader:   {bootloader or 'NOT FOUND'}")
-    print(f"Partitions:   {partitions or 'NOT FOUND'}")
-    print(f"OTA Data:     {ota_data or 'NOT FOUND'}")
-    print(f"App (main):   {app_bin}\n" + Style.RESET_ALL)
-    if not (bootloader and partitions):
-        print(Fore.RED + "Missing bootloader or partition table. Both are required for a complete flash!" + Style.RESET_ALL)
-        exit(1)
+    # --- Print summary ---
+    if merged_bin:
+        print(Fore.CYAN + f"\n[MODE] Flashing merged binary (recommended)")
+        print(f"Merged:       {merged_bin}\n" + Style.RESET_ALL)
+    else:
+        print(Fore.CYAN + f"\n[MODE] Flashing individual binaries")
+        print(f"Bootloader:   {bootloader or 'NOT FOUND'}")
+        print(f"Partitions:   {partitions or 'NOT FOUND'}")
+        print(f"OTA Data:     {ota_data or 'NOT FOUND'}")
+        print(f"App (main):   {app_bin or 'NOT FOUND'}\n" + Style.RESET_ALL)
+
+        if not (bootloader and partitions and app_bin):
+            print(Fore.RED + "Missing files. Need bootloader.bin + partition-table.bin + app .bin." + Style.RESET_ALL)
+            print(Fore.YELLOW + "TIP: Copy the *.merged.bin from your arduino build output for the easiest flash." + Style.RESET_ALL)
+            exit(1)
+
     confirm = input(Fore.YELLOW + "Ready to flash these files to ESP32-C5? (y/N): " + Style.RESET_ALL)
     if confirm.strip().lower() != 'y':
         print("Aborting.")
         exit(0)
 
-    # Flash using esptool, with offsets for C5
-    esptool_args = [
+    # === Build esptool command ===
+    # ESP32-C5 (RISC-V) requires flash_mode=dio
+    # Bootloader offset for C5: 0x2000 (confirmed via BOOTLOADER_OFFSET_IN_FLASH in sdkconfig)
+    base_args = [
         '--chip', 'esp32c5',
         '--port', serial_port,
         '--baud', '921600',
         '--before', 'default_reset',
         '--after', 'hard_reset',
-        'write_flash', '-z',
-        '0x2000', bootloader,
-        '0x8000', partitions,
+        'write_flash',
+        '--flash_mode', 'dio',
+        '--flash_freq', '80m',
+        '--flash_size', '4MB',
+        '-z',
     ]
-    if ota_data:
-        esptool_args += ['0xd000', ota_data]
-    esptool_args += ['0x10000', app_bin]
 
-    print(Fore.YELLOW + "Flashing ESP32-C5 with bootloader, partition table, and application..." + Style.RESET_ALL)
+    if merged_bin:
+        # Single merged image at offset 0x0 — includes bootloader, partitions, and app
+        esptool_args = base_args + ['0x0', merged_bin]
+        print(Fore.YELLOW + "Flashing merged binary at offset 0x0..." + Style.RESET_ALL)
+    else:
+        # Individual bins at their correct C5 offsets
+        # Bootloader: 0x2000 | Partitions: 0x8000 | OTA data: 0xD000 | App: 0x10000
+        esptool_args = base_args + [
+            '0x2000', bootloader,
+            '0x8000', partitions,
+        ]
+        if ota_data:
+            esptool_args += ['0xD000', ota_data]
+        esptool_args += ['0x10000', app_bin]
+        print(Fore.YELLOW + "Flashing individual binaries at correct C5 offsets..." + Style.RESET_ALL)
+
     try:
         esptool.main(esptool_args)
         print(Fore.GREEN + "Flashing complete!" + Style.RESET_ALL)

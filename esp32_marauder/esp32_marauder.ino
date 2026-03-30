@@ -238,8 +238,8 @@ void setup()
 
   Serial.begin(115200);
 
-  while(!Serial)
-    delay(10);
+  // With USB CDC (HWCDC), wait up to 3s for host connection, then continue anyway
+  { uint32_t _t = millis(); while (!Serial && (millis() - _t < 3000)) delay(10); }
 
   #ifdef HAS_C5_SD
     sharedSPI.begin(SD_SCK, SD_MISO, SD_MOSI);
@@ -408,7 +408,6 @@ void setup()
   menu_function_obj.changeMenu(menu_function_obj.current_menu);*/
 
   wifi_scan_obj.StartScan(WIFI_SCAN_OFF);
-  
   cli_obj.RunSetup();
 }
 

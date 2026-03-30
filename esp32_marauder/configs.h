@@ -29,7 +29,7 @@
   //#define MARAUDER_CYD_2USB // Another 2432S028 but it has tWo UsBs OoOoOoO
   //#define MARAUDER_CYD_GUITION // ESP32-2432S024 GUITION
   //#define MARAUDER_CYD_3_5_INCH
-  //#define MARAUDER_C5
+  #define MARAUDER_C5
   //#define MARAUDER_CARDPUTER
   //#define MARAUDER_V8
   //#define MARAUDER_MINI_V3
@@ -457,16 +457,15 @@
   #ifdef MARAUDER_C5
     //#define HAS_FLIPPER_LED
     //#define FLIPPER_ZERO_HAT
-    //#define HAS_BATTERY
     #define HAS_BT
     //#define HAS_BUTTONS
     #define HAS_NEOPIXEL_LED
     //#define HAS_PWR_MGMT
     //#define HAS_SCREEN
     #define HAS_GPS
-    #define HAS_C5_SD
-    #define HAS_SD
-    #define USE_SD
+    //#define HAS_C5_SD
+    //#define HAS_SD
+    //#define USE_SD
     #define HAS_DUAL_BAND
     //#define HAS_PSRAM
     //#define HAS_TEMP_SENSOR
@@ -2580,16 +2579,16 @@
       #define GPS_RX 9
     #elif defined(MARAUDER_C5)
       #define GPS_SERIAL_INDEX 1
-      #define GPS_TX 14
-      #define GPS_RX 13
+      #define GPS_TX 24
+      #define GPS_RX 25
     #elif defined(MARAUDER_V8)
       #define GPS_SERIAL_INDEX 1
-      #define GPS_TX 14
-      #define GPS_RX 13
+      #define GPS_TX 24
+      #define GPS_RX 25
     #elif defined(MARAUDER_MINI_V3)
       #define GPS_SERIAL_INDEX 1
-      #define GPS_TX 14
-      #define GPS_RX 13
+      #define GPS_TX 24
+      #define GPS_RX 25
     #endif
   #else
     #define mac_history_len 100

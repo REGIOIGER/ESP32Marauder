@@ -1,4 +1,33 @@
+#include <Arduino.h>
 #include "CommandLine.h"
+
+// --- DUAL SERIAL MIRRORING ---
+// When CDCOnBoot is enabled, Serial is HWCDC (USB). 
+// This wrapper ensures all CLI output goes to BOTH USB and UART0 (Serial0).
+#if ARDUINO_USB_CDC_ON_BOOT
+class DualSerialWrapper : public Stream {
+public:
+  size_t write(uint8_t c) override {
+    size_t r = Serial.write(c); // Use the original Serial (HWCDC)
+    Serial0.write(c);           // Mirror to UART0
+    return r;
+  }
+  size_t write(const uint8_t *buffer, size_t size) override {
+    size_t r = Serial.write(buffer, size);
+    Serial0.write(buffer, size);
+    return r;    
+  }
+  // Stream implementation
+  int available() override { return Serial.available() + Serial0.available(); }
+  int read() override { if (Serial.available()) return Serial.read(); return Serial0.read(); }
+  int peek() override { if (Serial.available()) return Serial.peek(); return Serial0.peek(); }
+  void flush() override { Serial.flush(); Serial0.flush(); }
+};
+static DualSerialWrapper DualSerial;
+#undef Serial
+#define Serial DualSerial
+#endif
+// -----------------------------
 
 // Brightness functions defined in esp32_marauder.ino
 #ifndef HAS_MINI_SCREEN
@@ -15,6 +44,48 @@ void CommandLine::RunSetup() {
   Serial.println(F("       By: justcallmekoko\n"));
   Serial.println(F("--------------------------------\n\n"));
   
+  // --- Autostart logic ---
+  bool enableAutostart = settings_obj.loadSetting<bool>("EnableAutostart");
+  String lastCommand = settings_obj.loadSetting<String>("LastCommand");
+  
+  if (enableAutostart && lastCommand != "") {
+    Serial.println("Autostart en 10 segundos: " + lastCommand);
+    Serial.println("Escribe 'autostart off' y presiona Enter para cancelar...");
+    
+    uint32_t startTime = millis();
+    bool cancelled = false;
+    String inputBuf = "";
+    
+    while (millis() - startTime < 10000) {
+      if (Serial.available() > 0) {
+        char c = Serial.read();
+        Serial.print(c); // Eco
+        if (c == '\n' || c == '\r') {
+          inputBuf.trim();
+          if (inputBuf == "autostart off") {
+            settings_obj.saveSetting<bool>("EnableAutostart", false);
+            cancelled = true;
+            break;
+          } else if (inputBuf != "") {
+            Serial.println("\nComando ignorado. Escribe 'autostart off' para cancelar.");
+          }
+          inputBuf = "";
+        } else {
+          inputBuf += c;
+        }
+      }
+      delay(10);
+    }
+    
+    if (cancelled) {
+      Serial.println(F("\nAutostart DESACTIVADO."));
+    } else {
+      Serial.println(F("\nEjecutando comando guardado..."));
+      this->runCommand(lastCommand);
+    }
+  }
+  // -----------------------
+
   Serial.print("> ");
 }
 
@@ -218,6 +289,19 @@ void CommandLine::runCommand(String input) {
 
   LinkedList<String> cmd_args = this->parseCommand(input, " ");
   
+  // --- Save command for autostart ---
+  bool enableAutostart = settings_obj.loadSetting<bool>("EnableAutostart");
+  if (enableAutostart) {
+    String firstArg = cmd_args.get(0);
+    // Don't save recursive, destructive, or interactive commands
+    if (firstArg != AUTOSTART_CMD && firstArg != REBOOT_CMD && firstArg != SETTINGS_CMD && 
+        firstArg != HELP_CMD && firstArg != STOPSCAN_CMD && firstArg != CLEARAP_CMD && 
+        firstArg != "sethtmlstr") {
+      settings_obj.saveSetting<bool>("LastCommand", input);
+    }
+  }
+  // ----------------------------------
+  
   //// Admin commands
   // Help
   if (cmd_args.get(0) == HELP_CMD) {
@@ -234,6 +318,7 @@ void CommandLine::runCommand(String input) {
     Serial.println(HELP_NMEA_CMD);
     Serial.println(HELP_GPS_POI_CMD);
     Serial.println(HELP_GPS_TRACKER_CMD);
+    Serial.println(HELP_AUTOSTART_CMD);
     
     // WiFi sniff/scan
     Serial.println(HELP_EVIL_PORTAL_CMD);
@@ -538,9 +623,28 @@ void CommandLine::runCommand(String input) {
       }
     }
   }
-
-  else if (cmd_args.get(0) == REBOOT_CMD)
+  else if (cmd_args.get(0) == AUTOSTART_CMD) {
+    if (cmd_args.size() > 1) {
+      String sub = cmd_args.get(1);
+      if (sub == "on") {
+        settings_obj.saveSetting<bool>("EnableAutostart", true);
+        Serial.println(F("Autostart ACTIVADO."));
+      } else if (sub == "off") {
+        settings_obj.saveSetting<bool>("EnableAutostart", false);
+        Serial.println(F("Autostart DESACTIVADO."));
+      } else if (sub == "status") {
+        bool en = settings_obj.loadSetting<bool>("EnableAutostart");
+        String lc = settings_obj.loadSetting<String>("LastCommand");
+        Serial.println("Autostart: " + (String)(en ? "ON" : "OFF"));
+        Serial.println("Comando guardado: " + lc);
+      }
+    } else {
+      Serial.println(HELP_AUTOSTART_CMD);
+    }
+  }
+  else if (cmd_args.get(0) == REBOOT_CMD) {
     ESP.restart();
+  }
 
   //// WiFi/Bluetooth Scan/Attack commands
   if (!wifi_scan_obj.scanning()) {
